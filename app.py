@@ -1,30 +1,39 @@
 import streamlit as st
 import requests
-from bs4 import BeautifulSoup
+import xml.etree.ElementTree as ET
 import re
 
 st.set_page_config(page_title="Brand Radar", layout="wide")
 
 st.title("Brand Radar")
-st.caption("基于真实数据源的品牌发现工具（每条线索可点击验证）")
+st.caption("真实品牌发现系统（每条结果可点击验证）")
 
-# ------------------------
-# 工具函数
-# ------------------------
+# =========================
+# 数据源（Google News RSS）
+# =========================
+
+RSS_SOURCES = [
+    "https://news.google.com/rss/search?q=中国品牌+出海&hl=zh-CN&gl=CN&ceid=CN:zh-Hans",
+    "https://news.google.com/rss/search?q=China+brand+overseas&hl=en-US&gl=US&ceid=US:en",
+    "https://news.google.com/rss/search?q=新消费+品牌+融资&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
+]
+
+# =========================
+# 品牌识别（可解释规则）
+# =========================
 
 def extract_brands(text):
     words = re.findall(r'\b[A-Za-z][A-Za-z0-9]{2,}\b', text)
     brands = []
 
     for w in words:
-        # 规则：首字母大写 或 全大写
         if w[0].isupper():
             brands.append(w)
 
     return list(set(brands))
 
 
-INVALID = ["China", "Chinese", "Brand", "Market", "Company", "Technology"]
+INVALID = ["China", "Chinese", "Brand", "Company", "Technology"]
 
 KNOWN = ["anker", "ugreen", "miniso", "shein", "kkv", "baseus"]
 
@@ -38,98 +47,71 @@ def clean_brand(b):
     return True
 
 
-# ------------------------
-# 数据源（真实网页）
-# ------------------------
+# =========================
+# 抓取 RSS（真实数据）
+# =========================
 
-def fetch_36kr():
-    url = "https://36kr.com/newsflashes"
-    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
-    soup = BeautifulSoup(r.text, "html.parser")
-
+def fetch_news():
     results = []
 
-    items = soup.select("a.item-title")
+    for url in RSS_SOURCES:
+        try:
+            r = requests.get(url, timeout=10)
+            root = ET.fromstring(r.content)
 
-    for it in items[:30]:
-        title = it.get_text()
-        link = "https://36kr.com" + it.get("href")
+            for item in root.findall(".//item")[:20]:
+                title = item.find("title").text
+                link = item.find("link").text
 
-        brands = extract_brands(title)
+                brands = extract_brands(title)
 
-        for b in brands:
-            if clean_brand(b):
-                results.append({
-                    "brand": b,
-                    "source": title,
-                    "url": link,
-                    "source_type": "36Kr"
-                })
+                for b in brands:
+                    if clean_brand(b):
+                        results.append({
+                            "brand": b,
+                            "title": title,
+                            "url": link
+                        })
+
+        except:
+            continue
 
     return results
 
 
-def fetch_techcrunch():
-    url = "https://techcrunch.com/startups/"
-    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
-    soup = BeautifulSoup(r.text, "html.parser")
-
-    results = []
-
-    items = soup.select("a.post-block__title__link")
-
-    for it in items[:30]:
-        title = it.get_text().strip()
-        link = it.get("href")
-
-        brands = extract_brands(title)
-
-        for b in brands:
-            if clean_brand(b):
-                results.append({
-                    "brand": b,
-                    "source": title,
-                    "url": link,
-                    "source_type": "TechCrunch"
-                })
-
-    return results
-
-
-# ------------------------
+# =========================
 # 主逻辑
-# ------------------------
+# =========================
 
 if st.button("开始扫描（真实数据）"):
 
-    with st.spinner("正在抓取真实数据..."):
+    with st.spinner("抓取真实新闻源..."):
 
-        data = []
-        data += fetch_36kr()
-        data += fetch_techcrunch()
+        data = fetch_news()
 
-    # 去重（品牌+来源）
-    unique = {}
+    # 去重
+    seen = set()
+    unique = []
+
     for d in data:
         key = d["brand"] + d["url"]
-        unique[key] = d
+        if key not in seen:
+            seen.add(key)
+            unique.append(d)
 
-    results = list(unique.values())
+    st.success(f"发现 {len(unique)} 条真实线索")
 
-    st.success(f"发现 {len(results)} 条真实线索")
+    # =========================
+    # 展示（完全可验证）
+    # =========================
 
-    # ------------------------
-    # 展示（可展开 + 可点击）
-    # ------------------------
-
-    for r in results:
-        with st.expander(f"{r['brand']} ｜ 来源：{r['source_type']}"):
+    for r in unique:
+        with st.expander(f"{r['brand']}"):
 
             st.write("**来源标题：**")
-            st.write(r["source"])
+            st.write(r["title"])
 
             st.write("**原始链接：**")
-            st.markdown(f"[点击查看原文]({r['url']})")
+            st.markdown(f"[点击查看]({r['url']})")
 
-            st.write("**说明：**")
-            st.info("该品牌从真实新闻标题中提取，尚未进行商标判断")
+            st.info("该品牌从真实新闻标题中提取，未进行任何推测性判断")
