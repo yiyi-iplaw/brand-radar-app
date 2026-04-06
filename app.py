@@ -1,181 +1,98 @@
 import streamlit as st
 import pandas as pd
 import random
-import re
 
 st.set_page_config(page_title="Brand Radar", layout="wide")
 
 st.title("Brand Radar")
-st.caption("发现正在起势、可能存在美国商标布局空窗的中国品牌")
+st.caption("自动发现可触达的中国品牌商标机会")
 
 # ==============================
-# 1️⃣ 品牌清洗（核心质量控制）
+# 左侧（改成产品逻辑）
 # ==============================
-def is_valid_brand(name: str) -> bool:
-    if not name:
-        return False
+st.sidebar.header("扫描设置")
 
-    name = name.strip()
-
-    if len(name) < 2 or len(name) > 30:
-        return False
-
-    # 过滤明显垃圾
-    invalid_patterns = [
-        r"http", r"www", r"\.com", r"\.cn",
-        r"=", r"/", r"\?"
-    ]
-    if any(re.search(p, name.lower()) for p in invalid_patterns):
-        return False
-
-    # 泛词过滤
-    stopwords = [
-        "中国品牌", "品牌", "出海", "新消费", "趋势",
-        "官网", "海外", "融资", "北美", "亚马逊"
-    ]
-    if name in stopwords:
-        return False
-
-    # 必须包含字母
-    if not any(c.isalpha() for c in name):
-        return False
-
-    return True
-
-
-def normalize_brand(name: str) -> str:
-    return name.strip().upper().replace(" ", "")
-
-
-# ==============================
-# 2️⃣ 模拟真实品牌池（替代垃圾mock）
-# ==============================
-REALISTIC_BRANDS = [
-    "KKV",
-    "POP MART",
-    "MINISO",
-    "SHEIN",
-    "ANKER",
-    "UGREEN",
-    "BASEUS",
-    "SOUNDPEATS",
-    "HAYLOU",
-    "REALME",
-    "ZEPP",
-    "XIAOMI",
-    "ROCKSPACE",
-    "ORICO",
-    "AUKEY",
-    "BLITZWOLF",
-    "QCY",
-    "TRIBIT",
-    "EDIFIER",
-    "MOONDROP"
-]
-
-
-def mock_scan(keywords: str, max_results: int):
-    selected = random.sample(REALISTIC_BRANDS, min(max_results, len(REALISTIC_BRANDS)))
-
-    cleaned = []
-    for b in selected:
-        if is_valid_brand(b):
-            cleaned.append(normalize_brand(b))
-
-    return cleaned
-
-
-# ==============================
-# 3️⃣ 商标判断（当前版本：规则 + 占位）
-# ==============================
-KNOWN_REGISTERED = {
-    "KKV",
-    "ANKER",
-    "SHEIN",
-    "MINISO",
-    "XIAOMI"
-}
-
-
-def classify_tm(brand: str):
-    """
-    下一步这里可以直接接 USPTO API
-    """
-    if brand in KNOWN_REGISTERED:
-        return "Registered", "No", "US trademark exists"
-
-    # 模拟判断逻辑
-    score = random.random()
-
-    if score > 0.7:
-        return "Likely Registered", "Low", "Possible existing filings"
-    elif score > 0.4:
-        return "Unknown", "Review", "Needs manual check"
-    else:
-        return "No Record", "High", "Potential trademark gap"
-
-
-# ==============================
-# 4️⃣ 评分模型（更接近真实产品）
-# ==============================
-def score_brand():
-    growth = random.randint(5, 20)
-    global_score = random.randint(5, 25)
-    tm_gap = random.randint(5, 25)
-    outreach = random.randint(5, 10)
-
-    total = growth + global_score + tm_gap + outreach
-
-    return total, growth, global_score, tm_gap, outreach
-
-
-# ==============================
-# UI
-# ==============================
-st.sidebar.header("扫描参数")
-
-keywords = st.sidebar.text_area(
-    "查询词（每行一个）",
-    value="中国品牌 出海\n中国 新消费 品牌 海外",
+market = st.sidebar.selectbox(
+    "目标市场",
+    ["US"]
 )
 
-max_results = st.sidebar.slider("抓取品牌数量", 5, 30, 15)
+industry = st.sidebar.selectbox(
+    "行业",
+    ["全部", "消费电子", "新消费"]
+)
 
-run = st.sidebar.button("Run scan")
+run = st.sidebar.button("开始扫描")
+
+# ==============================
+# 模拟品牌池（后面换真实数据）
+# ==============================
+BRANDS = [
+    "ANKER", "UGREEN", "BASEUS", "SOUNDPEATS",
+    "HAYLOU", "REALME", "TRIBIT", "EDIFIER",
+    "MOONDROP", "AUKEY", "ORICO", "ROCKSPACE",
+    "QCY", "ZEPP", "MINISO", "SHEIN", "KKV"
+]
+
+REGISTERED = {"ANKER", "SHEIN", "MINISO", "KKV"}
+
+# ==============================
+# 核心判断（接近真实业务）
+# ==============================
+def analyze_brand(b):
+    if b in REGISTERED:
+        return {
+            "status": "已注册",
+            "opportunity": "无",
+            "reason": "美国已有注册",
+            "action": "跳过"
+        }
+
+    r = random.random()
+
+    if r > 0.6:
+        return {
+            "status": "不确定",
+            "opportunity": "中",
+            "reason": "可能已有申请",
+            "action": "人工核查"
+        }
+    else:
+        return {
+            "status": "未发现",
+            "opportunity": "高",
+            "reason": "疑似未布局美国商标",
+            "action": "优先联系"
+        }
 
 # ==============================
 # 执行
 # ==============================
 if run:
-    brand_list = mock_scan(keywords, max_results)
+    selected = random.sample(BRANDS, 12)
 
-    data = []
+    results = []
 
-    for b in brand_list:
-        tm_status, opp, reason = classify_tm(b)
-        total, growth, global_score, tm_gap, outreach = score_brand()
+    for b in selected:
+        res = analyze_brand(b)
 
-        data.append({
-            "brand_name": b,
-            "total_score": total,
-            "growth_score": growth,
-            "global_score": global_score,
-            "tm_gap_score": tm_gap,
-            "outreach_score": outreach,
-            "tm_status": tm_status,
-            "opportunity": opp,
-            "reason": reason
+        results.append({
+            "品牌": b,
+            "商标状态": res["status"],
+            "机会等级": res["opportunity"],
+            "原因": res["reason"],
+            "建议动作": res["action"]
         })
 
-    df = pd.DataFrame(data).sort_values(by="total_score", ascending=False)
+    df = pd.DataFrame(results)
 
-    st.success(f"扫描完成，共生成 {len(df)} 条线索")
+    st.success("扫描完成")
 
-    # KPI
+    # KPI（换成业务指标）
     col1, col2, col3 = st.columns(3)
-    col1.metric("Leads", len(df))
-    col2.metric("Avg Score", round(df["total_score"].mean(), 1))
-    col3.metric("High Opportunity", len(df[df["opportunity"] == "High"]))
+    col1.metric("线索数", len(df))
+    col2.metric("高机会", len(df[df["机会等级"] == "高"]))
+    col3.metric("需核查", len(df[df["机会等级"] == "中"]))
 
-    st.subheader("线索结果")
+    st.subheader("可触达品牌列表")
     st.dataframe(df, use_container_width=True)
