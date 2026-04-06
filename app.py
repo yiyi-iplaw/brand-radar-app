@@ -1,140 +1,135 @@
 import streamlit as st
-import pandas as pd
 import requests
-from urllib.parse import quote
+from bs4 import BeautifulSoup
+import re
 
 st.set_page_config(page_title="Brand Radar", layout="wide")
 
 st.title("Brand Radar")
-st.caption("基于可验证来源的美国商标机会筛选工具")
+st.caption("基于真实数据源的品牌发现工具（每条线索可点击验证）")
 
-# ---------------------------
-# Sidebar（去掉你不喜欢的输入逻辑）
-# ---------------------------
+# ------------------------
+# 工具函数
+# ------------------------
 
-st.sidebar.header("扫描设置")
+def extract_brands(text):
+    words = re.findall(r'\b[A-Za-z][A-Za-z0-9]{2,}\b', text)
+    brands = []
 
-market = st.sidebar.selectbox("目标市场", ["US"], index=0)
+    for w in words:
+        # 规则：首字母大写 或 全大写
+        if w[0].isupper():
+            brands.append(w)
 
-industry = st.sidebar.selectbox("行业", ["消费电子", "家居", "新能源", "全部"], index=0)
+    return list(set(brands))
 
-run = st.sidebar.button("开始扫描")
 
-# ---------------------------
-# 数据源（真实品牌池，可替换）
-# ---------------------------
+INVALID = ["China", "Chinese", "Brand", "Market", "Company", "Technology"]
 
-BRAND_POOL = [
-    "ANKER", "UGREEN", "BASEUS", "MINISO", "KKV",
-    "SHEIN", "REALME", "EDIFIER", "SOUNDPEATS",
-    "TRIBIT", "ORICO", "AUKEY", "ROCKSPACE"
-]
+KNOWN = ["anker", "ugreen", "miniso", "shein", "kkv", "baseus"]
 
-# ---------------------------
-# USPTO 查询（真实 authority）
-# ---------------------------
+def clean_brand(b):
+    if any(x.lower() in b.lower() for x in INVALID):
+        return False
+    if b.lower() in KNOWN:
+        return False
+    if len(b) < 3:
+        return False
+    return True
 
-def search_uspto(brand):
-    try:
-        url = f"https://developer.uspto.gov/ibd-api/v1/application/publications?searchText={quote(brand)}&rows=5"
-        r = requests.get(url, timeout=5)
 
-        if r.status_code != 200:
-            return "Unknown", []
+# ------------------------
+# 数据源（真实网页）
+# ------------------------
 
-        data = r.json()
-
-        results = data.get("results", [])
-
-        evidence = []
-
-        if not results:
-            return "未发现", []
-
-        for item in results[:3]:
-            serial = item.get("serialNumber", "")
-            mark = item.get("markIdentification", "")
-
-            if serial:
-                tsdr = f"https://tsdr.uspto.gov/#caseNumber={serial}&caseType=SERIAL_NO"
-                evidence.append({
-                    "title": f"{mark} ({serial})",
-                    "url": tsdr
-                })
-
-        return "已发现记录", evidence
-
-    except:
-        return "Unknown", []
-
-# ---------------------------
-# 判断逻辑（全部基于 evidence）
-# ---------------------------
-
-def analyze_brand(brand):
-    status, evidence = search_uspto(brand)
-
-    if status == "未发现":
-        return {
-            "品牌": brand,
-            "商标状态": "未发现",
-            "机会等级": "高",
-            "原因": "USPTO未检索到记录",
-            "evidence": []
-        }
-
-    elif status == "已发现记录":
-        return {
-            "品牌": brand,
-            "商标状态": "已存在记录",
-            "机会等级": "低",
-            "原因": "USPTO存在注册或申请",
-            "evidence": evidence
-        }
-
-    else:
-        return {
-            "品牌": brand,
-            "商标状态": "不确定",
-            "机会等级": "中",
-            "原因": "查询异常或数据不足",
-            "evidence": []
-        }
-
-# ---------------------------
-# 主逻辑
-# ---------------------------
-
-if run:
+def fetch_36kr():
+    url = "https://36kr.com/newsflashes"
+    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
+    soup = BeautifulSoup(r.text, "html.parser")
 
     results = []
 
-    for b in BRAND_POOL:
-        res = analyze_brand(b)
-        results.append(res)
+    items = soup.select("a.item-title")
 
-    df = pd.DataFrame(results)
+    for it in items[:30]:
+        title = it.get_text()
+        link = "https://36kr.com" + it.get("href")
 
-    st.success(f"扫描完成，共生成 {len(df)} 条线索")
+        brands = extract_brands(title)
 
-    # KPI
-    col1, col2, col3 = st.columns(3)
-    col1.metric("总线索", len(df))
-    col2.metric("高机会", len(df[df["机会等级"] == "高"]))
-    col3.metric("需人工核查", len(df[df["商标状态"] == "不确定"]))
+        for b in brands:
+            if clean_brand(b):
+                results.append({
+                    "brand": b,
+                    "source": title,
+                    "url": link,
+                    "source_type": "36Kr"
+                })
 
-    st.subheader("可触达品牌列表（可展开查看证据）")
+    return results
 
-    for i, row in df.iterrows():
-        with st.expander(f"{row['品牌']} ｜ {row['机会等级']}机会"):
 
-            st.write(f"**商标状态**：{row['商标状态']}")
-            st.write(f"**判断原因**：{row['原因']}")
+def fetch_techcrunch():
+    url = "https://techcrunch.com/startups/"
+    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
+    soup = BeautifulSoup(r.text, "html.parser")
 
-            st.write("**权威来源（USPTO）**")
+    results = []
 
-            if row["evidence"]:
-                for ev in row["evidence"]:
-                    st.markdown(f"- [{ev['title']}]({ev['url']})")
-            else:
-                st.warning("未检索到记录（建议人工确认）")
+    items = soup.select("a.post-block__title__link")
+
+    for it in items[:30]:
+        title = it.get_text().strip()
+        link = it.get("href")
+
+        brands = extract_brands(title)
+
+        for b in brands:
+            if clean_brand(b):
+                results.append({
+                    "brand": b,
+                    "source": title,
+                    "url": link,
+                    "source_type": "TechCrunch"
+                })
+
+    return results
+
+
+# ------------------------
+# 主逻辑
+# ------------------------
+
+if st.button("开始扫描（真实数据）"):
+
+    with st.spinner("正在抓取真实数据..."):
+
+        data = []
+        data += fetch_36kr()
+        data += fetch_techcrunch()
+
+    # 去重（品牌+来源）
+    unique = {}
+    for d in data:
+        key = d["brand"] + d["url"]
+        unique[key] = d
+
+    results = list(unique.values())
+
+    st.success(f"发现 {len(results)} 条真实线索")
+
+    # ------------------------
+    # 展示（可展开 + 可点击）
+    # ------------------------
+
+    for r in results:
+        with st.expander(f"{r['brand']} ｜ 来源：{r['source_type']}"):
+
+            st.write("**来源标题：**")
+            st.write(r["source"])
+
+            st.write("**原始链接：**")
+            st.markdown(f"[点击查看原文]({r['url']})")
+
+            st.write("**说明：**")
+            st.info("该品牌从真实新闻标题中提取，尚未进行商标判断")
