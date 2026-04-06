@@ -1,98 +1,140 @@
 import streamlit as st
 import pandas as pd
-import random
+import requests
+from urllib.parse import quote
 
 st.set_page_config(page_title="Brand Radar", layout="wide")
 
 st.title("Brand Radar")
-st.caption("自动发现可触达的中国品牌商标机会")
+st.caption("基于可验证来源的美国商标机会筛选工具")
 
-# ==============================
-# 左侧（改成产品逻辑）
-# ==============================
+# ---------------------------
+# Sidebar（去掉你不喜欢的输入逻辑）
+# ---------------------------
+
 st.sidebar.header("扫描设置")
 
-market = st.sidebar.selectbox(
-    "目标市场",
-    ["US"]
-)
+market = st.sidebar.selectbox("目标市场", ["US"], index=0)
 
-industry = st.sidebar.selectbox(
-    "行业",
-    ["全部", "消费电子", "新消费"]
-)
+industry = st.sidebar.selectbox("行业", ["消费电子", "家居", "新能源", "全部"], index=0)
 
 run = st.sidebar.button("开始扫描")
 
-# ==============================
-# 模拟品牌池（后面换真实数据）
-# ==============================
-BRANDS = [
-    "ANKER", "UGREEN", "BASEUS", "SOUNDPEATS",
-    "HAYLOU", "REALME", "TRIBIT", "EDIFIER",
-    "MOONDROP", "AUKEY", "ORICO", "ROCKSPACE",
-    "QCY", "ZEPP", "MINISO", "SHEIN", "KKV"
+# ---------------------------
+# 数据源（真实品牌池，可替换）
+# ---------------------------
+
+BRAND_POOL = [
+    "ANKER", "UGREEN", "BASEUS", "MINISO", "KKV",
+    "SHEIN", "REALME", "EDIFIER", "SOUNDPEATS",
+    "TRIBIT", "ORICO", "AUKEY", "ROCKSPACE"
 ]
 
-REGISTERED = {"ANKER", "SHEIN", "MINISO", "KKV"}
+# ---------------------------
+# USPTO 查询（真实 authority）
+# ---------------------------
 
-# ==============================
-# 核心判断（接近真实业务）
-# ==============================
-def analyze_brand(b):
-    if b in REGISTERED:
+def search_uspto(brand):
+    try:
+        url = f"https://developer.uspto.gov/ibd-api/v1/application/publications?searchText={quote(brand)}&rows=5"
+        r = requests.get(url, timeout=5)
+
+        if r.status_code != 200:
+            return "Unknown", []
+
+        data = r.json()
+
+        results = data.get("results", [])
+
+        evidence = []
+
+        if not results:
+            return "未发现", []
+
+        for item in results[:3]:
+            serial = item.get("serialNumber", "")
+            mark = item.get("markIdentification", "")
+
+            if serial:
+                tsdr = f"https://tsdr.uspto.gov/#caseNumber={serial}&caseType=SERIAL_NO"
+                evidence.append({
+                    "title": f"{mark} ({serial})",
+                    "url": tsdr
+                })
+
+        return "已发现记录", evidence
+
+    except:
+        return "Unknown", []
+
+# ---------------------------
+# 判断逻辑（全部基于 evidence）
+# ---------------------------
+
+def analyze_brand(brand):
+    status, evidence = search_uspto(brand)
+
+    if status == "未发现":
         return {
-            "status": "已注册",
-            "opportunity": "无",
-            "reason": "美国已有注册",
-            "action": "跳过"
+            "品牌": brand,
+            "商标状态": "未发现",
+            "机会等级": "高",
+            "原因": "USPTO未检索到记录",
+            "evidence": []
         }
 
-    r = random.random()
-
-    if r > 0.6:
+    elif status == "已发现记录":
         return {
-            "status": "不确定",
-            "opportunity": "中",
-            "reason": "可能已有申请",
-            "action": "人工核查"
+            "品牌": brand,
+            "商标状态": "已存在记录",
+            "机会等级": "低",
+            "原因": "USPTO存在注册或申请",
+            "evidence": evidence
         }
+
     else:
         return {
-            "status": "未发现",
-            "opportunity": "高",
-            "reason": "疑似未布局美国商标",
-            "action": "优先联系"
+            "品牌": brand,
+            "商标状态": "不确定",
+            "机会等级": "中",
+            "原因": "查询异常或数据不足",
+            "evidence": []
         }
 
-# ==============================
-# 执行
-# ==============================
+# ---------------------------
+# 主逻辑
+# ---------------------------
+
 if run:
-    selected = random.sample(BRANDS, 12)
 
     results = []
 
-    for b in selected:
+    for b in BRAND_POOL:
         res = analyze_brand(b)
-
-        results.append({
-            "品牌": b,
-            "商标状态": res["status"],
-            "机会等级": res["opportunity"],
-            "原因": res["reason"],
-            "建议动作": res["action"]
-        })
+        results.append(res)
 
     df = pd.DataFrame(results)
 
-    st.success("扫描完成")
+    st.success(f"扫描完成，共生成 {len(df)} 条线索")
 
-    # KPI（换成业务指标）
+    # KPI
     col1, col2, col3 = st.columns(3)
-    col1.metric("线索数", len(df))
+    col1.metric("总线索", len(df))
     col2.metric("高机会", len(df[df["机会等级"] == "高"]))
-    col3.metric("需核查", len(df[df["机会等级"] == "中"]))
+    col3.metric("需人工核查", len(df[df["商标状态"] == "不确定"]))
 
-    st.subheader("可触达品牌列表")
-    st.dataframe(df, use_container_width=True)
+    st.subheader("可触达品牌列表（可展开查看证据）")
+
+    for i, row in df.iterrows():
+        with st.expander(f"{row['品牌']} ｜ {row['机会等级']}机会"):
+
+            st.write(f"**商标状态**：{row['商标状态']}")
+            st.write(f"**判断原因**：{row['原因']}")
+
+            st.write("**权威来源（USPTO）**")
+
+            if row["evidence"]:
+                for ev in row["evidence"]:
+                    st.markdown(f"- [{ev['title']}]({ev['url']})")
+            else:
+                st.warning("未检索到记录（建议人工确认）")
