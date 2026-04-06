@@ -1,35 +1,42 @@
 import streamlit as st
 import pandas as pd
 import random
+import re
 
 st.set_page_config(page_title="Brand Radar", layout="wide")
 
 st.title("Brand Radar")
 st.caption("发现正在起势、可能存在美国商标布局空窗的中国品牌")
 
-# -----------------------------
-# ✅ 品牌过滤逻辑（解决 target= 问题）
-# -----------------------------
+# ==============================
+# 1️⃣ 品牌清洗（核心质量控制）
+# ==============================
 def is_valid_brand(name: str) -> bool:
     if not name:
         return False
 
-    name = name.strip().lower()
+    name = name.strip()
 
     if len(name) < 2 or len(name) > 30:
         return False
 
-    invalid_chars = ["=", "/", "?", "&", "http", "www", ".com", ".cn"]
-    if any(c in name for c in invalid_chars):
+    # 过滤明显垃圾
+    invalid_patterns = [
+        r"http", r"www", r"\.com", r"\.cn",
+        r"=", r"/", r"\?"
+    ]
+    if any(re.search(p, name.lower()) for p in invalid_patterns):
         return False
 
+    # 泛词过滤
     stopwords = [
-        "中国品牌", "海外品牌", "新消费", "趋势", "出海",
-        "官网", "融资", "北美", "亚马逊", "target"
+        "中国品牌", "品牌", "出海", "新消费", "趋势",
+        "官网", "海外", "融资", "北美", "亚马逊"
     ]
     if name in stopwords:
         return False
 
+    # 必须包含字母
     if not any(c.isalpha() for c in name):
         return False
 
@@ -40,49 +47,91 @@ def normalize_brand(name: str) -> str:
     return name.strip().upper().replace(" ", "")
 
 
-# -----------------------------
-# ✅ 假数据生成（你原本逻辑的替代）
-# -----------------------------
-def mock_scan(keywords):
-    raw_brands = [
-        "KKV",
-        "target=",
-        "中国品牌",
-        "NewBrandA",
-        "CoolTech",
-        "品牌X",
-        "http://abc",
-    ]
+# ==============================
+# 2️⃣ 模拟真实品牌池（替代垃圾mock）
+# ==============================
+REALISTIC_BRANDS = [
+    "KKV",
+    "POP MART",
+    "MINISO",
+    "SHEIN",
+    "ANKER",
+    "UGREEN",
+    "BASEUS",
+    "SOUNDPEATS",
+    "HAYLOU",
+    "REALME",
+    "ZEPP",
+    "XIAOMI",
+    "ROCKSPACE",
+    "ORICO",
+    "AUKEY",
+    "BLITZWOLF",
+    "QCY",
+    "TRIBIT",
+    "EDIFIER",
+    "MOONDROP"
+]
 
-    brands = []
-    for b in raw_brands:
+
+def mock_scan(keywords: str, max_results: int):
+    selected = random.sample(REALISTIC_BRANDS, min(max_results, len(REALISTIC_BRANDS)))
+
+    cleaned = []
+    for b in selected:
         if is_valid_brand(b):
-            brands.append(normalize_brand(b))
+            cleaned.append(normalize_brand(b))
 
-    return list(set(brands))
+    return cleaned
 
 
-# -----------------------------
-# ✅ 商标判断（修复 KKV 问题）
-# -----------------------------
+# ==============================
+# 3️⃣ 商标判断（当前版本：规则 + 占位）
+# ==============================
 KNOWN_REGISTERED = {
     "KKV",
-    "HUAWEI",
-    "BYD",
+    "ANKER",
     "SHEIN",
+    "MINISO",
+    "XIAOMI"
 }
 
 
-def classify_tm(brand):
+def classify_tm(brand: str):
+    """
+    下一步这里可以直接接 USPTO API
+    """
     if brand in KNOWN_REGISTERED:
         return "Registered", "No", "US trademark exists"
-    else:
+
+    # 模拟判断逻辑
+    score = random.random()
+
+    if score > 0.7:
+        return "Likely Registered", "Low", "Possible existing filings"
+    elif score > 0.4:
         return "Unknown", "Review", "Needs manual check"
+    else:
+        return "No Record", "High", "Potential trademark gap"
 
 
-# -----------------------------
+# ==============================
+# 4️⃣ 评分模型（更接近真实产品）
+# ==============================
+def score_brand():
+    growth = random.randint(5, 20)
+    global_score = random.randint(5, 25)
+    tm_gap = random.randint(5, 25)
+    outreach = random.randint(5, 10)
+
+    total = growth + global_score + tm_gap + outreach
+
+    return total, growth, global_score, tm_gap, outreach
+
+
+# ==============================
 # UI
-# -----------------------------
+# ==============================
 st.sidebar.header("扫描参数")
 
 keywords = st.sidebar.text_area(
@@ -90,27 +139,43 @@ keywords = st.sidebar.text_area(
     value="中国品牌 出海\n中国 新消费 品牌 海外",
 )
 
+max_results = st.sidebar.slider("抓取品牌数量", 5, 30, 15)
+
 run = st.sidebar.button("Run scan")
 
+# ==============================
+# 执行
+# ==============================
 if run:
-    brand_list = mock_scan(keywords)
+    brand_list = mock_scan(keywords, max_results)
 
     data = []
 
     for b in brand_list:
         tm_status, opp, reason = classify_tm(b)
+        total, growth, global_score, tm_gap, outreach = score_brand()
 
         data.append({
             "brand_name": b,
+            "total_score": total,
+            "growth_score": growth,
+            "global_score": global_score,
+            "tm_gap_score": tm_gap,
+            "outreach_score": outreach,
             "tm_status": tm_status,
             "opportunity": opp,
-            "reason": reason,
-            "score": random.randint(40, 80)
+            "reason": reason
         })
 
-    df = pd.DataFrame(data)
+    df = pd.DataFrame(data).sort_values(by="total_score", ascending=False)
 
     st.success(f"扫描完成，共生成 {len(df)} 条线索")
 
+    # KPI
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Leads", len(df))
+    col2.metric("Avg Score", round(df["total_score"].mean(), 1))
+    col3.metric("High Opportunity", len(df[df["opportunity"] == "High"]))
+
     st.subheader("线索结果")
-    st.dataframe(df)
+    st.dataframe(df, use_container_width=True)
